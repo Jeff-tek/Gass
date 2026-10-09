@@ -1,0 +1,6 @@
+{
+  "name": "GasTrack LPG Refill Calculator & Recorder",
+  "description": "Smart cooking gas refill calculator, scale weight tracker, cylinder management, sales logs, and expenditure manager for LPG retail stations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

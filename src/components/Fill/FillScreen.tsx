@@ -20,11 +20,11 @@ export const FillScreen: React.FC<FillScreenProps> = ({
   onConfirmFill,
   onOpenBottleManager,
 }) => {
-  const [fillMode, setFillMode] = useState<'price' | 'kg'>('price');
-  const [amountInput, setAmountInput] = useState<string>('5000');
-  const [kgInput, setKgInput] = useState<string>('5');
+  const [fillMode, setFillMode] = useState<'price' | 'kg' | null>(null);
+  const [amountInput, setAmountInput] = useState<string>('');
+  const [kgInput, setKgInput] = useState<string>('');
   const [scaleReadingInput, setScaleReadingInput] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Cash');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
   const [showBottlePicker, setShowBottlePicker] = useState<boolean>(false);
 
   // Instant feedback state
@@ -44,15 +44,12 @@ export const FillScreen: React.FC<FillScreenProps> = ({
   if (fillMode === 'price') {
     const val = parseFloat(amountInput) || 0;
     totalPrice = val;
-    dispenseKg = pricePerKg > 0 ? truncateTo2Decimals(val / pricePerKg) : 0;
-  } else {
+    dispenseKg = (pricePerKg > 0 && val > 0) ? truncateTo2Decimals(val / pricePerKg) : 0;
+  } else if (fillMode === 'kg') {
     const val = parseFloat(kgInput) || 0;
     dispenseKg = truncateTo2Decimals(val);
     totalPrice = truncateTo2Decimals(val * pricePerKg);
   }
-
-  const currentScale = parseFloat(scaleReadingInput) || 0;
-  const expectedFinalReading = truncateTo2Decimals(currentScale + dispenseKg);
 
   // Active bottle calculations
   const remainingKg = activeBottle ? truncateTo2Decimals(activeBottle.remainingKg) : 0;
@@ -61,10 +58,38 @@ export const FillScreen: React.FC<FillScreenProps> = ({
   const isDepleted = remainingKg <= 0;
   const isLowStock = !isDepleted && remainingPct < 20;
 
+  // Field validation - require all fields to be selected/entered before logging
+  const isModeSelected = fillMode !== null;
+  const isDispenseValid = dispenseKg > 0;
+  const isScaleEntered = scaleReadingInput.trim() !== '' && !isNaN(parseFloat(scaleReadingInput)) && parseFloat(scaleReadingInput) >= 0;
+  const currentScale = isScaleEntered ? (parseFloat(scaleReadingInput) || 0) : 0;
+  const expectedFinalReading = (isScaleEntered && dispenseKg > 0)
+    ? truncateTo2Decimals(currentScale + dispenseKg)
+    : 0;
+
+  const isPaymentSelected = paymentMethod !== null;
+
+  const isReadyToConfirm =
+    isModeSelected &&
+    isDispenseValid &&
+    isScaleEntered &&
+    isPaymentSelected &&
+    !isDepleted &&
+    Boolean(activeBottle);
+
+  const getMissingFieldMessage = () => {
+    if (isDepleted) return 'Bottle Depleted - Switch Bottle';
+    if (!isModeSelected) return 'Select Price or Kg';
+    if (!isDispenseValid) return fillMode === 'price' ? 'Enter Amount (₦)' : 'Enter Kg wanted';
+    if (!isScaleEntered) return 'Enter Scale Reading (kg)';
+    if (!isPaymentSelected) return 'Select Payment Method';
+    return 'Confirm & Log Fill';
+  };
+
   const handleConfirm = () => {
     if (!activeBottle) return;
-    if (dispenseKg <= 0) return;
-    if (isDepleted) return;
+    if (!isReadyToConfirm) return;
+    if (!paymentMethod) return;
 
     const remainingAfter = Math.max(0, truncateTo2Decimals(remainingKg - dispenseKg));
 
@@ -93,15 +118,24 @@ export const FillScreen: React.FC<FillScreenProps> = ({
     });
     setJustLogged(true);
 
+    // Reset all fields so homepage is fresh and unselected for the next transaction
+    setFillMode(null);
+    setAmountInput('');
+    setKgInput('');
+    setScaleReadingInput('');
+    setPaymentMethod(null);
+
     setTimeout(() => {
       setJustLogged(false);
     }, 2800);
   };
 
   const handleClear = () => {
+    setFillMode(null);
     setAmountInput('');
     setKgInput('');
     setScaleReadingInput('');
+    setPaymentMethod(null);
   };
 
   if (!activeBottle) {
@@ -320,22 +354,28 @@ export const FillScreen: React.FC<FillScreenProps> = ({
           <div className="grid grid-cols-2 gap-1 w-44 bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
               type="button"
-              onClick={() => setFillMode('price')}
+              onClick={() => {
+                setFillMode('price');
+                setKgInput('');
+              }}
               className={`py-1 text-xs font-bold rounded-lg transition-all ${
                 fillMode === 'price'
                   ? 'bg-slate-900 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               Price (₦)
             </button>
             <button
               type="button"
-              onClick={() => setFillMode('kg')}
+              onClick={() => {
+                setFillMode('kg');
+                setAmountInput('');
+              }}
               className={`py-1 text-xs font-bold rounded-lg transition-all ${
                 fillMode === 'kg'
                   ? 'bg-slate-900 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               Kg wanted
@@ -343,51 +383,67 @@ export const FillScreen: React.FC<FillScreenProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Quick Presets Strip (First 5 chips only) */}
+        {/* Row 2: Quick Presets Strip (Only shown for selected mode; first 5 chips) */}
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1 shrink-0">
-          {fillMode === 'price'
-            ? (settings.quickNairaPresets?.length ? settings.quickNairaPresets : [1000, 2000, 3000, 5000, 7000]).slice(0, 5).map((amt) => (
-                <button
-                  key={amt}
-                  type="button"
-                  onClick={() => setAmountInput(amt.toString())}
-                  className={`px-3 py-1 text-xs font-mono font-bold rounded-xl border transition-all shrink-0 ${
-                    amountInput === amt.toString()
-                      ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 active:scale-95'
-                  }`}
-                >
-                  ₦{amt >= 1000 ? `${amt / 1000}k` : amt}
-                </button>
-              ))
-            : (settings.quickKgPresets?.length ? settings.quickKgPresets : [3, 5, 6, 10, 12.5]).slice(0, 5).map((kg) => (
-                <button
-                  key={kg}
-                  type="button"
-                  onClick={() => setKgInput(kg.toString())}
-                  className={`px-3 py-1 text-xs font-mono font-bold rounded-xl border transition-all shrink-0 ${
-                    kgInput === kg.toString()
-                      ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 active:scale-95'
-                  }`}
-                >
-                  {kg}kg
-                </button>
-              ))}
+          {fillMode === null ? (
+            <div className="text-xs text-slate-400 font-medium py-1 px-1 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span>Select <strong>Price (₦)</strong> or <strong>Kg wanted</strong> to choose presets</span>
+            </div>
+          ) : fillMode === 'price' ? (
+            (settings.quickNairaPresets?.length ? settings.quickNairaPresets : [1000, 2000, 3000, 5000, 7000]).slice(0, 5).map((amt) => (
+              <button
+                key={amt}
+                type="button"
+                onClick={() => setAmountInput(amt.toString())}
+                className={`px-3 py-1 text-xs font-mono font-bold rounded-xl border transition-all shrink-0 ${
+                  amountInput === amt.toString()
+                    ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 active:scale-95'
+                }`}
+              >
+                ₦{amt >= 1000 ? `${amt / 1000}k` : amt}
+              </button>
+            ))
+          ) : (
+            (settings.quickKgPresets?.length ? settings.quickKgPresets : [3, 5, 6, 10, 12.5]).slice(0, 5).map((kg) => (
+              <button
+                key={kg}
+                type="button"
+                onClick={() => setKgInput(kg.toString())}
+                className={`px-3 py-1 text-xs font-mono font-bold rounded-xl border transition-all shrink-0 ${
+                  kgInput === kg.toString()
+                    ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 active:scale-95'
+                }`}
+              >
+                {kg}kg
+              </button>
+            ))
+          )}
         </div>
 
         {/* Row 3: 2-Column Inputs Grid */}
         <div className="grid grid-cols-2 gap-3 shrink-0">
           <div>
             <label className="text-xs font-bold text-slate-700 block mb-1 uppercase tracking-wide">
-              {fillMode === 'price' ? 'Amount (₦)' : 'Kg wanted'}
+              {fillMode === 'kg' ? 'Kg wanted' : 'Amount (₦)'}
             </label>
             <input
               type="number"
-              step={fillMode === 'price' ? '50' : '0.1'}
-              value={fillMode === 'price' ? amountInput : kgInput}
-              onChange={(e) => (fillMode === 'price' ? setAmountInput(e.target.value) : setKgInput(e.target.value))}
-              placeholder={fillMode === 'price' ? '5000' : '12.5'}
+              step={fillMode === 'kg' ? '0.1' : '50'}
+              value={fillMode === 'price' ? amountInput : fillMode === 'kg' ? kgInput : ''}
+              onChange={(e) => {
+                if (!fillMode) {
+                  setFillMode('price');
+                  setAmountInput(e.target.value);
+                } else if (fillMode === 'price') {
+                  setAmountInput(e.target.value);
+                } else {
+                  setKgInput(e.target.value);
+                }
+              }}
+              placeholder={fillMode === 'price' ? 'e.g. 5000' : fillMode === 'kg' ? 'e.g. 12.5' : 'Select mode first'}
               className="w-full h-11 bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white rounded-xl px-3 text-base font-bold text-slate-900 placeholder-slate-400 font-mono tabular-nums outline-none transition-colors"
             />
           </div>
@@ -410,26 +466,34 @@ export const FillScreen: React.FC<FillScreenProps> = ({
         {/* Row 4: High-Contrast EXPECTED FINAL READING Box - Digits Below Words to Stand Out and Shout */}
         <div className="bg-slate-950 text-white rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-lg border border-slate-800 shrink-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className={`w-2 h-2 rounded-full ${isScaleEntered && dispenseKg > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
             <span className="text-[11px] font-black uppercase tracking-widest text-slate-300">
               EXPECTED FINAL SCALE READING
             </span>
           </div>
           
           <div className="flex items-baseline justify-center gap-1.5 my-0.5">
-            <span className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-emerald-400 tabular-nums drop-shadow-[0_2px_12px_rgba(52,211,153,0.35)]">
-              {formatTruncated2(expectedFinalReading)}
+            <span className={`text-4xl sm:text-5xl font-black font-mono tracking-tight tabular-nums ${
+              isScaleEntered && dispenseKg > 0
+                ? 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.35)]'
+                : 'text-slate-500'
+            }`}>
+              {isScaleEntered && dispenseKg > 0 ? formatTruncated2(expectedFinalReading) : '--.--'}
             </span>
             <span className="text-lg font-bold text-slate-400 font-mono">kg</span>
           </div>
 
           <div className="text-xs text-slate-400 font-mono mt-0.5">
-            {dispenseKg > 0 ? (
+            {isScaleEntered && dispenseKg > 0 ? (
               <span className="text-emerald-300 font-semibold">
                 Stop valve when scale hits <strong className="text-white underline decoration-emerald-400 decoration-2 underline-offset-2">{formatTruncated2(expectedFinalReading)} kg</strong>
               </span>
+            ) : isScaleEntered && dispenseKg <= 0 ? (
+              <span>Scale: {formatTruncated2(currentScale)} kg • Enter amount/kg to calculate target</span>
+            ) : !isScaleEntered && dispenseKg > 0 ? (
+              <span>Dispensing {formatTruncated2(dispenseKg)} kg • Enter scale reading to calculate target</span>
             ) : (
-              <span>Target scale reading will calculate once scale or amount is entered</span>
+              <span>Input scale reading and amount/kg to calculate target</span>
             )}
           </div>
         </div>
@@ -438,18 +502,22 @@ export const FillScreen: React.FC<FillScreenProps> = ({
         <div className="flex items-center justify-between text-xs font-mono px-1 py-1 text-slate-700 border-t border-slate-100 shrink-0">
           <div>
             <span className="text-slate-400 text-[11px] uppercase font-sans">Dispense: </span>
-            <span className="font-bold text-emerald-700 text-sm">{formatTruncated2(dispenseKg)} kg</span>
+            <span className="font-bold text-emerald-700 text-sm">
+              {dispenseKg > 0 ? `${formatTruncated2(dispenseKg)} kg` : '0.00 kg'}
+            </span>
           </div>
           <div>
             <span className="text-slate-400 text-[11px] uppercase font-sans">Total: </span>
-            <span className="font-black text-slate-900 text-sm">{formatNaira(totalPrice)}</span>
+            <span className="font-black text-slate-900 text-sm">
+              {totalPrice > 0 ? formatNaira(totalPrice) : '₦0'}
+            </span>
           </div>
           <div className="text-[11px] text-slate-400">
             {formatNaira(pricePerKg)}/kg
           </div>
         </div>
 
-        {/* Row 6: Payment Method Buttons */}
+        {/* Row 6: Payment Method Buttons (None pre-selected) */}
         <div className="shrink-0">
           <div className="grid grid-cols-3 gap-2">
             {(['Cash', 'Transfer', 'POS'] as const).map((method) => (
@@ -459,7 +527,7 @@ export const FillScreen: React.FC<FillScreenProps> = ({
                 onClick={() => setPaymentMethod(method)}
                 className={`py-2 text-xs font-semibold rounded-xl transition-all active:scale-95 ${
                   paymentMethod === method
-                    ? 'bg-slate-900 text-white shadow-sm'
+                    ? 'bg-slate-900 text-white shadow-sm ring-2 ring-slate-900'
                     : 'bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100'
                 }`}
               >
@@ -469,17 +537,17 @@ export const FillScreen: React.FC<FillScreenProps> = ({
           </div>
         </div>
 
-        {/* Row 7: Action Button */}
+        {/* Row 7: Action Button - Only enabled after all fields are selected & inputted */}
         <button
           type="button"
           onClick={handleConfirm}
-          disabled={dispenseKg <= 0 || isDepleted || justLogged}
+          disabled={!isReadyToConfirm || justLogged}
           className={`w-full py-3.5 px-4 text-sm font-bold rounded-xl shadow-md transition-all duration-300 flex items-center justify-center gap-2 active:scale-[0.98] shrink-0 ${
             justLogged
               ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/25'
-              : isDepleted
-              ? 'bg-rose-600 text-white opacity-80'
-              : 'bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:pointer-events-none text-white'
+              : !isReadyToConfirm
+              ? 'bg-slate-200 text-slate-400 border border-slate-300/60 cursor-not-allowed shadow-none'
+              : 'bg-slate-900 hover:bg-slate-800 text-white shadow-lg active:scale-[0.98]'
           }`}
         >
           {justLogged && lastLoggedSummary ? (
@@ -487,10 +555,8 @@ export const FillScreen: React.FC<FillScreenProps> = ({
               <Check className="w-5 h-5 text-white stroke-[3]" />
               <span>✓ Recorded! (+{formatTruncated2(lastLoggedSummary.kg)} kg · {formatNaira(lastLoggedSummary.amount)})</span>
             </>
-          ) : isDepleted ? (
-            <span>Bottle Depleted - Switch Bottle</span>
           ) : (
-            <span>Confirm & Log Fill</span>
+            <span>{getMissingFieldMessage()}</span>
           )}
         </button>
       </div>

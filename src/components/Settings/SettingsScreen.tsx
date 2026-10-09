@@ -11,6 +11,7 @@ import {
   Heart,
   ExternalLink,
 } from 'lucide-react';
+import { AppIconsSection } from './AppIconsSection';
 
 interface SettingsScreenProps {
   settings: StationSettings;
